@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minitel</title>
+<style>
+body{margin:0;background:#1b1b1b;font:12px sans-serif;display:flex;justify-content:center}
+#m{width:100%;max-width:700px;padding:8px;box-sizing:border-box}
+canvas{width:100%;display:block;background:#000}
+#bar{background:#d9560c;color:#fff;padding:2px 8px;font-size:11px;margin-bottom:6px}
+.r{display:flex;gap:4px;margin-bottom:4px}
+.r button{flex:1;border:0;border-radius:4px;color:#fff;background:#4a2f22;font:11px sans-serif;padding:11px 2px;cursor:pointer}
+.r button:active{filter:brightness(1.4)}
+.f{background:#a0785a!important}.o{background:#f58a3c!important}.e{background:#a39a3a!important}
+.sp{flex:5!important}
+</style>
+</head>
+<body>
+<div id="m">
+<canvas id="s" width="640" height="500"></canvas>
+<div id="bar">Minitel · minitel.ecloudserv.fr</div>
+<div id="k"></div>
+</div>
+<script>
+const CW=16,CH=20,COL=['#000','#e00','#0c0','#ee0','#00f','#e0e','#0ee','#fff'];
+const AC={65:'\u0300',66:'\u0301',67:'\u0302',72:'\u0308',75:'\u0327'};
+const cv=document.getElementById('s'),g=cv.getContext('2d');
+let cells,a,r,c,st,sk,ur,acc,last,cur=1,phase=1,ws;
+
+function grid(){return Array.from({length:25},()=>Array(40).fill(null))}
+function resetA(){a={fg:7,bg:0,dh:0,dw:0,bl:0,iv:0,mo:0}}
+function init(){cells=grid();resetA();r=1;c=0;st=0;sk=0;last=null}
+function nl(){r=r>=24?1:r+1;c=0;resetA()}
+function put(s,code){
+  last=[s,code];
+  const k=Object.assign({s,m:a.mo&&code&&(code<64||code>=96)?code:0},a);
+  cells[r][c]=k;
+  if(a.dw&&c<39){cells[r][c+1]={x:1};c++}
+  if(++c>=40)nl();
+}
+function ctl(b){
+  if(b==8)c=Math.max(0,c-1);
+  else if(b==9)c=Math.min(39,c+1);
+  else if(b==10)nl();
+  else if(b==11)r=Math.max(1,r-1);
+  else if(b==12){cells=grid();r=1;c=0;resetA()}
+  else if(b==13)c=0;
+  else if(b==14)a.mo=1;
+  else if(b==15)a.mo=0;
+  else if(b==17)cur=1;
+  else if(b==20)cur=0;
+  else if(b==18)st=4;
+  else if(b==19)sk=1;
+  else if(b==24)for(let i=c;i<40;i++)cells[r][i]=null;
+  else if(b==25)st=5;
+  else if(b==27)st=1;
+  else if(b==30){r=1;c=0;resetA()}
+  else if(b==31)st=2;
+}
+function esc(b){
+  if(b>=64&&b<=71)a.fg=b-64;
+  else if(b>=80&&b<=87){a.bg=b-80;put(' ',32)}
+  else if(b==72)a.bl=1;
+  else if(b==73)a.bl=0;
+  else if(b==76){a.dh=0;a.dw=0}
+  else if(b==77){a.dh=1;a.dw=0}
+  else if(b==78){a.dh=0;a.dw=1}
+  else if(b==79){a.dh=1;a.dw=1}
+  else if(b==92){a.iv=0;put(' ',32)}
+  else if(b==93){a.iv=1;put(' ',32)}
+  else if(b==57)sk=1;
+  else if(b==58)sk=2;
+  else if(b==59)sk=3;
+  else if(b==35)sk=2;
+  else if(b==91)st=7;
+}
+function feed(u){
+  for(const b of u){
+    if(sk){sk--;continue}
+    if(st==7){if(b>=64&&b<=126)st=0;continue}
+    if(st==1){st=0;esc(b);continue}
+    if(st==2){ur=b;st=3;continue}
+    if(st==3){
+      st=0;const nr=Math.min(24,Math.max(0,ur-64));
+      if(nr!=r)resetA();
+      r=nr;c=Math.min(39,Math.max(0,b-65));continue;
+    }
+    if(st==4){st=0;if(last)for(let i=0;i<b-64;i++)put(last[0],last[1]);continue}
+    if(st==5){if(AC[b]){acc=AC[b];st=6}else st=0;continue}
+    if(st==6){st=0;put((String.fromCharCode(b)+acc).normalize('NFC'),0);continue}
+    if(b<32){ctl(b);continue}
+    if(b<127)put(String.fromCharCode(b),b);
+  }
+  draw();
+}
+function drawCell(k,rr,cc){
+  let f=COL[k.fg],bg=COL[k.bg];
+  if(k.iv)[f,bg]=[bg,f];
+  const w=CW*(k.dw?2:1),h=CH*(k.dh?2:1),x=cc*CW,y=(rr+1)*CH-h;
+  g.fillStyle=bg;g.fillRect(x,y,w,h);
+  if(k.bl&&!phase)return;
+  g.fillStyle=f;
+  if(k.m){
+    const v=(k.m&31)|((k.m&64)>>1);
+    for(let i=0;i<6;i++)if(v>>i&1)g.fillRect(x+(i&1)*w/2,y+(i>>1)*h/3,w/2+.5,h/3+.5);
+  }else if(k.s=='_'){
+    const t=k.dh?2:1;g.fillRect(x+1,y+h-4*t,w-2,2*t);
+  }else if(k.s!=' '){
+    g.save();g.translate(x+w/2,y+h/2);g.scale(k.dw?2:1,k.dh?2:1);
+    g.fillText(k.s,0,1);g.restore();
+  }
+}
+function draw(){
+  g.fillStyle='#000';g.fillRect(0,0,640,500);
+  g.font='bold 21px "Courier New",monospace';g.textAlign='center';g.textBaseline='middle';
+  for(let i=0;i<25;i++)for(let j=0;j<40;j++){const k=cells[i][j];if(k&&!k.x)drawCell(k,i,j)}
+  if(cur&&phase){g.fillStyle='rgba(200,200,200,.8)';g.fillRect(c*CW,r*CH,CW,CH)}
+}
+setInterval(()=>{phase=!phase;draw()},500);
+
+function msg(t){feed([12,...[...t].map(x=>x.charCodeAt(0)&127)])}
+function connect(){
+  init();msg('Connexion...');
+  ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/ws');
+  ws.binaryType='arraybuffer';
+  ws.onopen=()=>{init()};
+  ws.onmessage=e=>feed(typeof e.data=='string'?[...e.data].map(x=>x.charCodeAt(0)&255):new Uint8Array(e.data));
+  ws.onclose=()=>{feed([31,77,65,27,71,17,...[...'Connexion perdue - Cnx/fin'].map(x=>x.charCodeAt(0))])};
+}
+function snd(...b){if(ws&&ws.readyState==1)ws.send(new Uint8Array(b))}
+const FN={'Sommaire':0x46,'Annulation':0x45,'Retour':0x42,'Répétition':0x43,'Guide':0x44,'Correction':0x47,'Suite':0x48,'Envoi':0x41};
+function fn(name){
+  if(name=='Cnx/fin'){if(!ws||ws.readyState>1)connect();else snd(0x13,0x49)}
+  else if(FN[name])snd(0x13,FN[name]);
+}
+
+// Clavier à l'écran
+let low=false;
+const kb=document.getElementById('k');
+function row(items){
+  const d=document.createElement('div');d.className='r';
+  for(const [label,cls,act] of items){
+    const b=document.createElement('button');b.textContent=label;if(cls)b.className=cls;
+    b.onclick=act;d.appendChild(b);
+  }
+  kb.appendChild(d);
+}
+const F=(n,cls)=>[n,cls,()=>fn(n)];
+const K=ch=>[ch,'',()=>snd((/[A-Z]/.test(ch)&&low?ch.toLowerCase():ch).charCodeAt(0))];
+row([F('Début enr.','o'),F('Sommaire','f'),F('Annulation','f'),F('Retour','f'),F('Répétition','f')]);
+row([F('Fnct','f'),F('Cnx/fin','f'),F('Guide','f'),F('Correction','f'),F('Suite','f'),F('Envoi','e')]);
+for(const l of ['1234567890','AZERTYUIOP','QSDFGHJKLM'])row([...l].map(K));
+row([...'WXCVBN.-'].map(K).concat([['Maj','',()=>{low=!low}]]));
+const arrow=ch=>(()=>snd(27,91,ch.charCodeAt(0)));
+row([['↑','',arrow('A')],['↓','',arrow('B')],['Espace','sp',()=>snd(32)],['←','',arrow('D')],['→','',arrow('C')]]);
+
+// Clavier physique
+const KEYS={Enter:'Envoi',Backspace:'Correction',Escape:'Annulation',Home:'Sommaire',PageUp:'Retour',PageDown:'Suite',F1:'Guide'};
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
+  if(KEYS[e.key]){e.preventDefault();fn(KEYS[e.key])}
+  else if(e.key.startsWith('Arrow')){e.preventDefault();snd(27,91,'ABCD'['Up Down Right Left'.split(' ').indexOf(e.key.slice(5))].charCodeAt(0))}
+  else if(e.key.length==1&&e.key.charCodeAt(0)<127){e.preventDefault();snd(e.key.charCodeAt(0))}
+});
+connect();
+</script>
+</body>
+</html>
